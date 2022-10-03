@@ -6,7 +6,12 @@ import sklearn
 import sklearn.preprocessing
 import pandas as pd
 from sklearn.utils import check_random_state
+from sksurv.util import Surv
 from sksurv.nonparametric import nelson_aalen_estimator
+from sksurv.linear_model import CoxPHSurvivalAnalysis
+import matplotlib
+import plotly.subplots
+import plotly.graph_objects
 from survLime.utils.optimization import OptFuncionMaker
 
 
@@ -48,13 +53,14 @@ class SurvLimeExplainer:
             None
         """
 
+        self.training_data = training_data
         self.random_state = check_random_state(random_state)
         self.sample_around_instance = sample_around_instance
         self.train_events = [y[0] for y in target_data]
         self.train_times = [y[1] for y in target_data]
         self.model_output_times = model_output_times
         if H0 is None:
-            self.H0 = self.compute_nelson_aalen_estimator(
+            self.H0, self.timestamps = self.compute_nelson_aalen_estimator(
                 self.train_events, self.train_times
             )
         else:
@@ -91,7 +97,7 @@ class SurvLimeExplainer:
         H0 = nelson_aalen[1]
         m = H0.shape[0]
         H0 = np.reshape(H0, newshape=(m, 1))
-        return H0
+        return H0, nelson_aalen[0]
 
     @staticmethod
     def validate_H0(H0: np.ndarray) -> None:
@@ -219,6 +225,12 @@ class SurvLimeExplainer:
         objective = cp.Minimize(funct)
         prob = cp.Problem(objective)
         result = prob.solve(verbose=verbose)
+        
+        labels = Surv().from_arrays(self.train_events, self.train_times)
+        model = CoxPHSurvivalAnalysis().fit(self.training_data, labels)
+        model.coef_ = b.value
+        self.survlime_sf =  model.predict_survival_function(scaled_data[0].reshape(1,-1), return_array=True)
+        self.predicted_sf = predict_fn(scaled_data[0].reshape(1,-1), return_array=True)
         return b.value, result  # H_i_j_wc, weights, log_correction, scaled_data,
 
     def generate_neighbours(self, data_row: np.ndarray, num_samples: int) -> np.ndarray:
@@ -245,3 +257,160 @@ class SurvLimeExplainer:
             data = data * scale + mean
         data[0] = data_row.copy()
         return data
+
+    def plot(self, type="lines", show=True):
+        ticker = matplotlib.ticker.MaxNLocator(
+            nbins=10, min_n_ticks=4, integer=True, prune="upper"
+        )
+        ticks = ticker.tick_values(int(min(self.train_times)), int(max(self.train_times))).astype(
+            int
+        )
+        n_at_risk = []
+        n_censored = []
+        n_events = []
+        for i in ticks:
+            n_at_risk.append((self.train_times > i).sum())
+            n_events.append(np.array(self.train_events)[self.train_times <= i].sum())
+            n_censored.append((~np.array(self.train_events)[self.train_times <= i]).sum())
+        if type == "lines":
+            fig = plotly.subplots.make_subplots(
+                rows=2, cols=1, print_grid=False, shared_xaxes=True
+            )
+            fig.add_trace(
+                plotly.graph_objs.Scatter(
+                    x=self.timestamps,
+                    y=self.predicted_sf[0],
+                    mode="lines",
+                    line_color="#4378bf",
+                    line_width=2,
+                    hovertemplate="<b>Predicted SF</b><br>"
+                    + "Time: %{x}<br>"
+                    + "SF value: %{y:.6f}<extra></extra>",
+                    hoverinfo="text",
+                ),
+                1,
+                1,
+            )
+            fig.add_trace(
+                plotly.graph_objs.Scatter(
+                    x=self.timestamps,
+                    y=self.survlime_sf[0],
+                    mode="lines",
+                    line_color="#371ea3",
+                    line_width=2,
+                    hovertemplate="<b>SurvLIME SF (LIME approx.)</b><br>"
+                    + "Time: %{x}<br>"
+                    + "SF value: %{y:.6f}<extra></extra>",
+                    hoverinfo="text",
+                ),
+                1,
+                1,
+            )
+            fig.append_trace(
+                plotly.graph_objs.Scatter(
+                    x=ticks,
+                    y=[0.8] * len(ticks),
+                    text=n_at_risk,
+                    mode="text",
+                    showlegend=False,
+                ),
+                2,
+                1,
+            )
+            fig.append_trace(
+                plotly.graph_objs.Scatter(
+                    x=ticks,
+                    y=[0.5] * len(ticks),
+                    text=n_events,
+                    mode="text",
+                    showlegend=False,
+                ),
+                2,
+                1,
+            )
+            fig.append_trace(
+                plotly.graph_objs.Scatter(
+                    x=ticks,
+                    y=[0.2] * len(ticks),
+                    text=n_censored,
+                    mode="text",
+                    showlegend=False,
+                ),
+                2,
+                1,
+            )
+            x_range = [0 - int(max(self.train_times)) * 0.025, int(max(self.train_times)) * 1.025]
+            fig.update_xaxes(
+                {
+                    "matches": None,
+                    "showticklabels": True,
+                    "title": "timeline",
+                    "title_standoff": 0,
+                    "type": "linear",
+                    "gridwidth": 2,
+                    "zeroline": False,
+                    "automargin": True,
+                    "tickmode": "array",
+                    "tickvals": ticks,
+                    "ticktext": ticks,
+                    "tickcolor": "white",
+                    "ticklen": 3,
+                    "fixedrange": True,
+                    "range": x_range,
+                }
+            ).update_yaxes(
+                {
+                    "type": "linear",
+                    "gridwidth": 2,
+                    "zeroline": False,
+                    "automargin": True,
+                    "ticks": "outside",
+                    "tickcolor": "white",
+                    "ticklen": 3,
+                    "fixedrange": True,
+                }
+            ).update_layout(
+                {
+                    "showlegend": False,
+                    "template": "none",
+                    "margin_pad": 6,
+                    "margin_l": 110,
+                }
+            ).update_layout(
+                yaxis2={
+                    "tickvals": [0.2, 0.5, 0.8],
+                    "ticktext": ["censored", "events", "at risk"],
+                }
+            )
+            fig["layout"]["xaxis2"]["visible"] = False
+            fig["layout"]["yaxis2"]["showgrid"] = False
+            fig["layout"]["yaxis"]["domain"] = [0.35, 1]
+            fig["layout"]["yaxis2"]["domain"] = [0.0, 0.2]
+            fig["layout"]["yaxis2"]["range"] = [0, 1]
+        if show:
+            fig.show(
+                config={
+                    "displaylogo": False,
+                    "staticPlot": False,
+                    "toImageButtonOptions": {
+                        "height": None,
+                        "width": None,
+                    },
+                    "modeBarButtonsToRemove": [
+                        "sendDataToCloud",
+                        "lasso2d",
+                        "autoScale2d",
+                        "select2d",
+                        "zoom2d",
+                        "pan2d",
+                        "zoomIn2d",
+                        "zoomOut2d",
+                        "resetScale2d",
+                        "toggleSpikelines",
+                        "hoverCompareCartesian",
+                        "hoverClosestCartesian",
+                    ],
+                }
+            )
+        else:
+            return fig
