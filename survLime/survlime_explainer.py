@@ -13,6 +13,7 @@ import matplotlib
 import plotly.subplots
 import plotly.graph_objects
 from survLime.utils.optimization import OptFuncionMaker
+import shap
 
 
 class SurvLimeExplainer:
@@ -225,12 +226,19 @@ class SurvLimeExplainer:
         objective = cp.Minimize(funct)
         prob = cp.Problem(objective)
         result = prob.solve(verbose=verbose)
-        
+
         labels = Surv().from_arrays(self.train_events, self.train_times)
         model = CoxPHSurvivalAnalysis().fit(self.training_data, labels)
         model.coef_ = b.value
-        self.survlime_sf =  model.predict_survival_function(scaled_data[0].reshape(1,-1), return_array=True)
-        self.predicted_sf = predict_fn(scaled_data[0].reshape(1,-1), return_array=True)
+        self.survlime_sf = model.predict_survival_function(
+            scaled_data[0].reshape(1, -1), return_array=True
+        )[0]
+        self.predicted_sf = predict_fn(
+            scaled_data[0].reshape(1, -1), return_array=True
+        )[0]
+        self.predicted_sf = np.exp(np.log(np.clip(1 - self.predicted_sf + epsilon,a_min=0, a_max=1)))
+        self.predicted_sf =  np.interp(times_to_fill, self.model_output_times, self.predicted_sf)
+
         return b.value, result  # H_i_j_wc, weights, log_correction, scaled_data,
 
     def generate_neighbours(self, data_row: np.ndarray, num_samples: int) -> np.ndarray:
@@ -262,16 +270,18 @@ class SurvLimeExplainer:
         ticker = matplotlib.ticker.MaxNLocator(
             nbins=10, min_n_ticks=4, integer=True, prune="upper"
         )
-        ticks = ticker.tick_values(int(min(self.train_times)), int(max(self.train_times))).astype(
-            int
-        )
+        ticks = ticker.tick_values(
+            int(min(self.train_times)), int(max(self.train_times))
+        ).astype(int)
         n_at_risk = []
         n_censored = []
         n_events = []
         for i in ticks:
             n_at_risk.append((self.train_times > i).sum())
             n_events.append(np.array(self.train_events)[self.train_times <= i].sum())
-            n_censored.append((~np.array(self.train_events)[self.train_times <= i]).sum())
+            n_censored.append(
+                (~np.array(self.train_events)[self.train_times <= i]).sum()
+            )
         if type == "lines":
             fig = plotly.subplots.make_subplots(
                 rows=2, cols=1, print_grid=False, shared_xaxes=True
@@ -279,7 +289,7 @@ class SurvLimeExplainer:
             fig.add_trace(
                 plotly.graph_objs.Scatter(
                     x=self.timestamps,
-                    y=self.predicted_sf[0],
+                    y=self.predicted_sf,
                     mode="lines",
                     line_color="#4378bf",
                     line_width=2,
@@ -294,7 +304,7 @@ class SurvLimeExplainer:
             fig.add_trace(
                 plotly.graph_objs.Scatter(
                     x=self.timestamps,
-                    y=self.survlime_sf[0],
+                    y=self.survlime_sf,
                     mode="lines",
                     line_color="#371ea3",
                     line_width=2,
@@ -339,7 +349,10 @@ class SurvLimeExplainer:
                 2,
                 1,
             )
-            x_range = [0 - int(max(self.train_times)) * 0.025, int(max(self.train_times)) * 1.025]
+            x_range = [
+                0 - int(max(self.train_times)) * 0.025,
+                int(max(self.train_times)) * 1.025,
+            ]
             fig.update_xaxes(
                 {
                     "matches": None,
