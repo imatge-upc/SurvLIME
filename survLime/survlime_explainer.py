@@ -94,6 +94,7 @@ class SurvLimeExplainer:
     def compute_nelson_aalen_estimator(
         event: np.ndarray, time: np.ndarray
     ) -> np.ndarray:
+        import ipdb;ipdb.set_trace()
         nelson_aalen = nelson_aalen_estimator(event, time)
         H0 = nelson_aalen[1]
         m = H0.shape[0]
