@@ -202,13 +202,14 @@ class SurvLimeExplainer:
         num_features = data.shape[1]
         unique_times_to_event = np.sort(np.unique(self.train_times))
         m = unique_times_to_event.shape[0]
+
+
         FN_pred = predict_wrapper(
             predict_fn=predict_fn,
             data=data,
             unique_times_to_event=unique_times_to_event,
             model_output_times=self.model_output_times,
         )
-
         # From now on, original data must be a numpy array
         if isinstance(data, np.ndarray):
             data_np = data
@@ -262,6 +263,16 @@ class SurvLimeExplainer:
 
         objective = cp.Minimize(funct)
         prob = cp.Problem(objective)
+
+
+       #for solver in cp.installed_solvers():
+       #    print(f'Trying solver {solver}')
+      # try:
+      #     verbose=True
         result = prob.solve(verbose=verbose)
+       #result = prob.solve(verbose=verbose, solver='ECOS', abstol=1e-4)
+      # except:
+      #     print(f'Failed to solve with {solver}')
         cox_coefficients = b.value[:, 0]
+
         return cox_coefficients

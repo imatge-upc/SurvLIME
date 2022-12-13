@@ -87,12 +87,19 @@ def predict_wrapper(
     num_individuals = data.shape[0]
     number_unique_times = unique_times_to_event.shape[0]
     # Predict
+    if isinstance(data, pd.DataFrame):
+        data = data.to_numpy().astype(np.float32)
+    
     values_raw = predict_fn(data)
     # In case of a pd.DataFrame, force numpy
     if isinstance(values_raw, pd.DataFrame):
         values = values_raw.to_numpy()
     else:
         values = copy.deepcopy(values_raw)
+
+    # if the second dimension of values is larger, swap them
+    if values.shape[1] > values.shape[0]:
+        values = values.T
     # If it is a numpy array
     if isinstance(values, np.ndarray):
         total_dim = values.ndim
